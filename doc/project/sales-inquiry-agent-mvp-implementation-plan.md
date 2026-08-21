@@ -6,7 +6,9 @@
 
 **Architecture:** Spring Boot 单体拥有固定 Agent 配置、Platform Session、Execution、Tool 与 Trace；每个 ACTIVE Platform Session 绑定一个 Pi RPC 子进程，Pi 负责 Agent Loop 和上下文。Pi Extension 仅代理 `get_customer_info` 与 `get_inquiry_info` 到 Java Internal Tool Gateway，所有外部事件先映射为平台事件再持久化和推送。
 
-**Tech Stack:** Java 21、Maven 3.9+、Spring Boot 4.1.0、Spring MVC、Spring JDBC、Flyway、MySQL 8、springdoc-openapi 3.0.3、JUnit 5、Mockito、Pi 0.84.2、TypeScript Pi Extension。
+**Tech Stack:** Java 21、Maven 3.9+、Spring Boot 4.1.0、Spring MVC、MyBatis-Plus 3.5.17、Flyway、MySQL 8、springdoc-openapi 3.0.3、JUnit 5、Mockito、Pi 0.84.2、TypeScript Pi Extension。
+
+**Version Basis:** [MyBatis-Plus 官方安装文档](https://baomidou.com/en/getting-started/install/)说明从 3.5.13 开始提供 Spring Boot 4 Starter；本计划固定使用官方当前版本 `mybatis-plus-spring-boot4-starter:3.5.17`。
 
 **Spec:** `doc/project/sales-inquiry-agent-mvp-design.md`
 
@@ -45,8 +47,7 @@ src/main/java/com/iumyx/agentops/
 ├── session/
 │   ├── AgentSession.java                       Platform Session 模型
 │   ├── SessionStatus.java                      ACTIVE/CLOSED
-│   ├── SessionRepository.java                  Session 持久化契约
-│   ├── JdbcSessionRepository.java              JDBC 实现
+│   ├── SessionMapper.java                      MyBatis-Plus Session Mapper
 │   ├── SessionRuntimeContext.java              内存 Runtime/凭证上下文
 │   ├── SessionRuntimeContextRegistry.java      单 ACTIVE Session 内存注册表
 │   └── SessionService.java                     Session 生命周期
@@ -55,10 +56,8 @@ src/main/java/com/iumyx/agentops/
 │   ├── ExecutionStatus.java                    Execution 状态
 │   ├── PlatformEventType.java                  平台事件类型
 │   ├── ExecutionEvent.java                     平台事件模型
-│   ├── ExecutionRepository.java                Execution 持久化契约
-│   ├── JdbcExecutionRepository.java            JDBC 实现
-│   ├── ExecutionEventRepository.java           Event 持久化契约
-│   ├── JdbcExecutionEventRepository.java        JDBC 实现
+│   ├── ExecutionMapper.java                    MyBatis-Plus Execution Mapper
+│   ├── ExecutionEventMapper.java               MyBatis-Plus Event Mapper
 │   ├── ActiveExecutionRegistry.java            Session 到 RUNNING Execution 映射
 │   ├── ExecutionAborter.java                    Session 关闭时的中止契约
 │   ├── PlatformEventListener.java              Event 实时监听契约
@@ -127,7 +126,7 @@ scripts/sales-inquiry-mvp-smoke.sh               HTTP/SSE 冒烟脚本
 
 - [ ] **Step 1: Create `pom.xml` and write the failing configuration binding test**
 
-Use Spring Boot parent `4.1.0`. Add `spring-boot-starter-webmvc`, `spring-boot-starter-validation`, `spring-boot-starter-jdbc`, `spring-boot-starter-actuator`, `flyway-core`, `flyway-mysql`, runtime `mysql-connector-j`, `springdoc-openapi-starter-webmvc-ui:3.0.3`, `spring-boot-starter-test`, and test-scope `org.awaitility:awaitility`.
+Use Spring Boot parent `4.1.0`. Add `spring-boot-starter-webmvc`, `spring-boot-starter-validation`, `spring-boot-starter-actuator`, `com.baomidou:mybatis-plus-spring-boot4-starter:3.5.17`, `flyway-core`, `flyway-mysql`, runtime `mysql-connector-j`, `springdoc-openapi-starter-webmvc-ui:3.0.3`, `spring-boot-starter-test`, and test-scope `org.awaitility:awaitility`. Do not add `spring-boot-starter-jdbc` separately because the MyBatis-Plus starter already brings the required JDBC infrastructure.
 
 ```java
 class FixedAgentPropertiesTest {
@@ -207,6 +206,11 @@ spring:
   flyway:
     enabled: true
 
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler
+
 agent:
   fixed:
     agent-key: sales-inquiry-assistant
@@ -240,32 +244,30 @@ git add pom.xml src/main/java/com/iumyx/agentops/AgentOpsApplication.java \
 git commit -m "build: bootstrap sales inquiry agent service"
 ```
 
-### Task 2: Flyway Schema 与 JDBC 持久化
+### Task 2: Flyway Schema 与 MyBatis-Plus 持久化
 
 **Files:**
 - Create: `src/main/resources/db/migration/V1__create_agent_runtime.sql`
 - Create: `src/main/java/com/iumyx/agentops/session/SessionStatus.java`
 - Create: `src/main/java/com/iumyx/agentops/session/AgentSession.java`
-- Create: `src/main/java/com/iumyx/agentops/session/SessionRepository.java`
-- Create: `src/main/java/com/iumyx/agentops/session/JdbcSessionRepository.java`
+- Create: `src/main/java/com/iumyx/agentops/session/SessionMapper.java`
 - Create: `src/main/java/com/iumyx/agentops/execution/ExecutionStatus.java`
 - Create: `src/main/java/com/iumyx/agentops/execution/PlatformEventType.java`
 - Create: `src/main/java/com/iumyx/agentops/execution/AgentExecution.java`
 - Create: `src/main/java/com/iumyx/agentops/execution/ExecutionEvent.java`
-- Create: `src/main/java/com/iumyx/agentops/execution/ExecutionRepository.java`
-- Create: `src/main/java/com/iumyx/agentops/execution/JdbcExecutionRepository.java`
-- Create: `src/main/java/com/iumyx/agentops/execution/ExecutionEventRepository.java`
-- Create: `src/main/java/com/iumyx/agentops/execution/JdbcExecutionEventRepository.java`
+- Create: `src/main/java/com/iumyx/agentops/execution/ExecutionMapper.java`
+- Create: `src/main/java/com/iumyx/agentops/execution/ExecutionEventMapper.java`
 - Create: `src/test/resources/application-mysql-test.yml`
 - Test: `src/test/java/com/iumyx/agentops/persistence/PersistenceIntegrationTest.java`
 
 **Interfaces:**
-- Produces: `void SessionRepository.create(AgentSession session)`, `Optional<AgentSession> findById(String id)`, `Optional<AgentSession> findActive()`, `boolean close(String id, Instant closedAt)`, `int closeAllActive(Instant closedAt)`.
-- Produces: `void ExecutionRepository.create(AgentExecution execution)`, `Optional<AgentExecution> findById(String id)`, `Optional<AgentExecution> findRunningBySessionId(String sessionId)`, `boolean markRunning(String id, Instant startedAt)`, `boolean completeIfRunning(String id, ExecutionStatus terminalStatus, String output, String errorCode, String errorMessage, long inputTokens, long outputTokens, int toolCallCount, Instant finishedAt)`, `int failNonTerminalExecutions(String errorCode, String errorMessage, Instant finishedAt)`.
-- Produces: `long ExecutionEventRepository.nextSequence(String executionId)`, `void append(ExecutionEvent event)`, `List<ExecutionEvent> findByExecutionIdOrderBySequence(String executionId)`.
+- Produces: `SessionMapper extends BaseMapper<AgentSession>`.
+- Produces: `ExecutionMapper extends BaseMapper<AgentExecution>`.
+- Produces: `ExecutionEventMapper extends BaseMapper<ExecutionEvent>` with `long selectNextSequence(String executionId)`.
+- Uses: MyBatis-Plus `LambdaQueryWrapper` and `LambdaUpdateWrapper` for CRUD, active-session lookup, running-Execution lookup, conditional terminal updates and startup recovery.
 - Consumes: MySQL test schema `java_agent_ops_mvp_test` and the three `MVP_TEST_DB_*` environment variables.
 
-- [ ] **Step 1: Create the test profile and failing repository integration test**
+- [ ] **Step 1: Create the test profile and failing Mapper integration test**
 
 ```yaml
 spring:
@@ -283,25 +285,40 @@ spring:
 @EnabledIfEnvironmentVariable(named = "RUN_MYSQL_INTEGRATION", matches = "true")
 class PersistenceIntegrationTest {
 
-    @Autowired SessionRepository sessions;
-    @Autowired ExecutionRepository executions;
-    @Autowired ExecutionEventRepository events;
+    @Autowired SessionMapper sessions;
+    @Autowired ExecutionMapper executions;
+    @Autowired ExecutionEventMapper events;
+
+    @BeforeEach
+    void clearTables() {
+        events.delete(null);
+        executions.delete(null);
+        sessions.delete(null);
+    }
 
     @Test
     void shouldPersistSessionExecutionAndOrderedEvents() {
         Instant now = Instant.now();
         AgentSession session = new AgentSession("sess-1", "sales-inquiry-assistant",
                 "pi", "pi-session-1", SessionStatus.ACTIVE, now, null);
-        sessions.create(session);
+        sessions.insert(session);
 
-        AgentExecution execution = AgentExecution.created("exec-1", session.id(), "hello", now);
-        executions.create(execution);
-        assertThat(executions.markRunning(execution.id(), now)).isTrue();
+        AgentExecution execution = AgentExecution.created("exec-1", session.getId(), "hello", now);
+        executions.insert(execution);
+        int runningUpdated = executions.update(null,
+                Wrappers.<AgentExecution>lambdaUpdate()
+                        .eq(AgentExecution::getId, execution.getId())
+                        .eq(AgentExecution::getStatus, ExecutionStatus.CREATED)
+                        .set(AgentExecution::getStatus, ExecutionStatus.RUNNING)
+                        .set(AgentExecution::getStartedAt, now));
+        assertThat(runningUpdated).isEqualTo(1);
 
-        events.append(new ExecutionEvent("event-1", execution.id(), 1,
+        events.insert(new ExecutionEvent("event-1", execution.getId(), 1,
                 PlatformEventType.RUN_STARTED, "{}", now));
-        assertThat(events.findByExecutionIdOrderBySequence(execution.id()))
-                .extracting(ExecutionEvent::sequenceNo)
+        assertThat(events.selectList(Wrappers.<ExecutionEvent>lambdaQuery()
+                        .eq(ExecutionEvent::getExecutionId, execution.getId())
+                        .orderByAsc(ExecutionEvent::getSequenceNo)))
+                .extracting(ExecutionEvent::getSequenceNo)
                 .containsExactly(1L);
     }
 }
@@ -311,7 +328,7 @@ class PersistenceIntegrationTest {
 
 Run: `RUN_MYSQL_INTEGRATION=true mvn -q -Dspring.profiles.active=mysql-test -Dtest=PersistenceIntegrationTest test`
 
-Expected: FAIL because the migration and repository types do not exist.
+Expected: FAIL because the migration, entity and Mapper types do not exist.
 
 - [ ] **Step 3: Create the exact Flyway migration**
 
@@ -357,9 +374,9 @@ CREATE TABLE agent_execution_event (
 );
 ```
 
-- [ ] **Step 4: Implement immutable records and JDBC repositories**
+- [ ] **Step 4: Implement MyBatis-Plus entities and Mappers**
 
-Use `JdbcClient` and explicit SQL. `AgentExecution` must provide the exact factory `created(String id, String sessionId, String input, Instant createdAt)`, returning zero usage counters and status `CREATED`. The terminal update must be conditional:
+Use ordinary Java entity classes with a no-argument constructor, an all-arguments constructor, explicit getters/setters, `@TableName`, and `@TableId(type = IdType.INPUT)`. Do not add Lombok, XML Mapper files, generic Repository wrappers, or MyBatis-Plus code generator. `AgentExecution` must provide the exact factory `created(String id, String sessionId, String input, Instant createdAt)`, returning zero usage counters and status `CREATED`.
 
 ```java
 public enum SessionStatus {
@@ -380,35 +397,30 @@ public enum PlatformEventType {
 }
 ```
 
-Use the exact immutable model fields from the migration: `AgentSession(id, agentKey, runtimeType, runtimeSessionId, status, createdAt, closedAt)`, `AgentExecution(id, sessionId, status, input, output, errorCode, errorMessage, inputTokens, outputTokens, toolCallCount, startedAt, finishedAt, createdAt)`, and `ExecutionEvent(id, executionId, sequenceNo, eventType, eventData, createdAt)`.
+Use the exact model fields from the migration: `AgentSession(id, agentKey, runtimeType, runtimeSessionId, status, createdAt, closedAt)`, `AgentExecution(id, sessionId, status, input, output, errorCode, errorMessage, inputTokens, outputTokens, toolCallCount, startedAt, finishedAt, createdAt)`, and `ExecutionEvent(id, executionId, sequenceNo, eventType, eventData, createdAt)`.
 
 ```java
-public boolean completeIfRunning(String executionId, ExecutionStatus terminalStatus,
-        String output, String errorCode, String errorMessage, long inputTokens,
-        long outputTokens, int toolCallCount, Instant finishedAt) {
-    int updated = jdbcClient.sql("""
-            UPDATE agent_execution
-               SET status = :status, output = :output, error_code = :errorCode,
-                   error_message = :errorMessage, input_tokens = :inputTokens,
-                   output_tokens = :outputTokens, tool_call_count = :toolCallCount,
-                   finished_at = :finishedAt
-             WHERE id = :id AND status = 'RUNNING'
+@Mapper
+public interface SessionMapper extends BaseMapper<AgentSession> {
+}
+
+@Mapper
+public interface ExecutionMapper extends BaseMapper<AgentExecution> {
+}
+
+@Mapper
+public interface ExecutionEventMapper extends BaseMapper<ExecutionEvent> {
+
+    @Select("""
+            SELECT COALESCE(MAX(sequence_no), 0) + 1
+              FROM agent_execution_event
+             WHERE execution_id = #{executionId}
             """)
-            .param("status", terminalStatus.name())
-            .param("output", output)
-            .param("errorCode", errorCode)
-            .param("errorMessage", errorMessage)
-            .param("inputTokens", inputTokens)
-            .param("outputTokens", outputTokens)
-            .param("toolCallCount", toolCallCount)
-            .param("finishedAt", finishedAt)
-            .param("id", executionId)
-            .update();
-    return updated == 1;
+    long selectNextSequence(@Param("executionId") String executionId);
 }
 ```
 
-`nextSequence(executionId)` must execute `SELECT COALESCE(MAX(sequence_no), 0) + 1 ...` inside the publisher's serialized critical section. Map all timestamps through UTC `Instant`.
+Configure `mybatis-plus.configuration.map-underscore-to-camel-case: true` and `default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler` in `application.yml`. `selectNextSequence(executionId)` is the only custom SQL in this task and must run inside the publisher's serialized critical section. Map all timestamps through UTC `Instant`.
 
 - [ ] **Step 5: Re-run persistence tests**
 
@@ -728,7 +740,7 @@ git commit -m "feat: integrate pi rpc runtime"
 - Test: `src/test/java/com/iumyx/agentops/session/SessionServiceTest.java`
 
 **Interfaces:**
-- Consumes: `FixedAgentProperties`, `PiRuntimeProperties`, `SessionRepository`, `AgentRuntimeRegistry`.
+- Consumes: `FixedAgentProperties`, `PiRuntimeProperties`, `SessionMapper`, `AgentRuntimeRegistry`.
 - Produces: `AgentSession SessionService.createSession()`, `void closeSession(String sessionId)`, `AgentSession getRequired(String sessionId)`.
 - Produces: `SessionRuntimeContext(platformSessionId, runtimeSessionId, runtimeType, toolToken)`.
 
@@ -738,21 +750,21 @@ git commit -m "feat: integrate pi rpc runtime"
 @Test
 void shouldCreateOnlyOneActiveSessionAndCloseRuntimeOnSessionClose() {
     AgentSession created = service.createSession();
-    assertThat(created.status()).isEqualTo(SessionStatus.ACTIVE);
+    assertThat(created.getStatus()).isEqualTo(SessionStatus.ACTIVE);
     assertThatThrownBy(service::createSession)
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("An active session already exists");
 
-    service.closeSession(created.id());
-    assertThat(repository.findById(created.id()).orElseThrow().status())
+    service.closeSession(created.getId());
+    assertThat(sessionMapper.selectById(created.getId()).getStatus())
             .isEqualTo(SessionStatus.CLOSED);
-    assertThat(fakeRuntime.closedSessionIds()).contains(created.runtimeSessionId());
+    assertThat(fakeRuntime.closedSessionIds()).contains(created.getRuntimeSessionId());
 }
 
 @Test
 void shouldCloseRuntimeWhenPersistenceFailsAfterProcessStart() {
     doThrow(new DataAccessResourceFailureException("db unavailable"))
-            .when(repository).create(any());
+            .when(sessionMapper).insert(any());
     assertThatThrownBy(service::createSession).isInstanceOf(DataAccessException.class);
     assertThat(fakeRuntime.closedSessionIds()).hasSize(1);
 }
@@ -769,15 +781,33 @@ Expected: FAIL with missing Session runtime context and service.
 Generate a 256-bit token with `SecureRandom`, Base64 URL encoding without padding. `createSession()` must execute this exact order:
 
 ```text
-check repository has no ACTIVE Session
+query `SessionMapper` with a lambda wrapper and confirm no ACTIVE Session
 generate platformSessionId and toolToken
 call runtime.createSession(request)
-persist ACTIVE AgentSession
+insert ACTIVE AgentSession through `SessionMapper`
 register in-memory SessionRuntimeContext
 return AgentSession
 ```
 
 If persistence or registry setup fails, close the newly created Runtime Session before rethrowing. `closeSession()` must abort a running execution through a callback added in Task 7, close Runtime, update MySQL, then remove the in-memory context. Do not persist the token.
+
+Use MyBatis-Plus wrappers directly; do not recreate a Repository façade:
+
+```java
+private AgentSession findActiveSession() {
+    return sessionMapper.selectOne(Wrappers.<AgentSession>lambdaQuery()
+            .eq(AgentSession::getStatus, SessionStatus.ACTIVE)
+            .last("LIMIT 1"));
+}
+
+private int markClosed(String sessionId, Instant closedAt) {
+    return sessionMapper.update(null, Wrappers.<AgentSession>lambdaUpdate()
+            .eq(AgentSession::getId, sessionId)
+            .eq(AgentSession::getStatus, SessionStatus.ACTIVE)
+            .set(AgentSession::getStatus, SessionStatus.CLOSED)
+            .set(AgentSession::getClosedAt, closedAt));
+}
+```
 
 - [ ] **Step 4: Run Session tests**
 
@@ -809,7 +839,7 @@ git commit -m "feat: manage platform session lifecycle"
 - Test: `src/test/java/com/iumyx/agentops/execution/ExecutionServiceTest.java`
 
 **Interfaces:**
-- Consumes: Runtime, Session and persistence contracts from Tasks 2, 4 and 6.
+- Consumes: Runtime, Session and MyBatis-Plus Mappers from Tasks 2, 4 and 6.
 - Produces: `AgentExecution ExecutionService.createExecution(String sessionId, String message)`, `void abortExecution(String executionId)`, `void failFromToolGateway(String executionId, String errorCode, String safeMessage)`, `AgentExecution getRequired(String executionId)`, `List<ExecutionEvent> trace(String executionId)`.
 - Produces: `void ActiveExecutionRegistry.register(String sessionId, String executionId)`, `Optional<String> findBySessionId(String sessionId)`, `void removeByExecutionId(String executionId)`.
 - Produces: `ExecutionEvent PlatformEventPublisher.publish(String executionId, PlatformEventType eventType, Map<String,Object> data)`.
@@ -825,10 +855,12 @@ void shouldPersistEventsAndCompleteExecutionOnce() {
             Map.of("delta", "正在分析")));
     fakeRuntime.complete(new RuntimeCompletion("客户概况\n...", 100, 50, 2));
 
-    await().untilAsserted(() -> assertThat(repository.findById(execution.id()).orElseThrow().status())
+    await().untilAsserted(() -> assertThat(executionMapper.selectById(execution.getId()).getStatus())
             .isEqualTo(ExecutionStatus.SUCCEEDED));
-    assertThat(eventRepository.findByExecutionIdOrderBySequence(execution.id()))
-            .extracting(ExecutionEvent::eventType)
+    assertThat(eventMapper.selectList(Wrappers.<ExecutionEvent>lambdaQuery()
+                    .eq(ExecutionEvent::getExecutionId, execution.getId())
+                    .orderByAsc(ExecutionEvent::getSequenceNo)))
+            .extracting(ExecutionEvent::getEventType)
             .containsExactly(PlatformEventType.RUN_STARTED,
                     PlatformEventType.MESSAGE_DELTA,
                     PlatformEventType.RUN_COMPLETED);
@@ -856,11 +888,11 @@ Expected: FAIL with missing publisher, registry and service.
 ```java
 public synchronized ExecutionEvent publish(String executionId,
         PlatformEventType eventType, Map<String, Object> data) {
-    long sequence = eventRepository.nextSequence(executionId);
+    long sequence = eventMapper.selectNextSequence(executionId);
     ExecutionEvent event = new ExecutionEvent(UUID.randomUUID().toString(),
             executionId, sequence, eventType,
             objectMapper.writeValueAsString(data), Instant.now(clock));
-    eventRepository.append(event);
+    eventMapper.insert(event);
     listeners.forEach(listener -> listener.onEvent(event));
     return event;
 }
@@ -870,17 +902,29 @@ Convert JSON serialization failures to a stable internal exception without inclu
 
 - [ ] **Step 4: Implement Execution orchestration and terminal races**
 
-`createExecution` must synchronously persist CREATED, register it as active, then submit asynchronous work. Async work marks RUNNING, publishes RUN_STARTED, schedules 120-second timeout, and calls Runtime. Runtime callbacks map events, aggregate message deltas, and call `completeIfRunning`.
+`createExecution` must synchronously insert CREATED through `ExecutionMapper`, register it as active, then submit asynchronous work. Async work conditionally changes CREATED to RUNNING with a `LambdaUpdateWrapper`, publishes RUN_STARTED, schedules 120-second timeout, and calls Runtime. Runtime callbacks map events, aggregate message deltas, and compete for the terminal state through a second conditional wrapper.
 
 ```java
 private void finish(String executionId, ExecutionStatus status,
         RuntimeCompletion completion, String errorCode, String safeMessage,
         PlatformEventType terminalEvent) {
-    boolean won = executionRepository.completeIfRunning(executionId, status,
-            completion == null ? null : completion.output(), errorCode, safeMessage,
-            completion == null ? 0 : completion.inputTokens(),
-            completion == null ? 0 : completion.outputTokens(),
-            completion == null ? 0 : completion.toolCallCount(), Instant.now(clock));
+    int updated = executionMapper.update(null,
+            Wrappers.<AgentExecution>lambdaUpdate()
+                    .eq(AgentExecution::getId, executionId)
+                    .eq(AgentExecution::getStatus, ExecutionStatus.RUNNING)
+                    .set(AgentExecution::getStatus, status)
+                    .set(AgentExecution::getOutput,
+                            completion == null ? null : completion.output())
+                    .set(AgentExecution::getErrorCode, errorCode)
+                    .set(AgentExecution::getErrorMessage, safeMessage)
+                    .set(AgentExecution::getInputTokens,
+                            completion == null ? 0 : completion.inputTokens())
+                    .set(AgentExecution::getOutputTokens,
+                            completion == null ? 0 : completion.outputTokens())
+                    .set(AgentExecution::getToolCallCount,
+                            completion == null ? 0 : completion.toolCallCount())
+                    .set(AgentExecution::getFinishedAt, Instant.now(clock)));
+    boolean won = updated == 1;
     if (won) {
         eventPublisher.publish(executionId, terminalEvent, Map.of());
         activeExecutionRegistry.removeByExecutionId(executionId);
@@ -987,7 +1031,7 @@ public ToolInvocationResponse invoke(@PathVariable String toolName,
 }
 ```
 
-If `AgentTool.execute` throws a technical exception, call `executionService.failFromToolGateway(executionId, "TOOL_EXECUTION_FAILED", "Tool execution failed")`, return HTTP 502, and never include the exception message or arguments. Add the exact method `void ExecutionService.failFromToolGateway(String executionId, String errorCode, String safeMessage)`; it aborts the Runtime and competes for terminal state `FAILED` through the same `completeIfRunning` path as other failures.
+If `AgentTool.execute` throws a technical exception, call `executionService.failFromToolGateway(executionId, "TOOL_EXECUTION_FAILED", "Tool execution failed")`, return HTTP 502, and never include the exception message or arguments. Add the exact method `void ExecutionService.failFromToolGateway(String executionId, String errorCode, String safeMessage)`; it aborts the Runtime and competes for terminal state `FAILED` through the same conditional MyBatis-Plus update as other failures.
 
 - [ ] **Step 4: Implement the exact Pi Extension**
 
@@ -1090,7 +1134,7 @@ git commit -m "feat: proxy pi tool calls to java"
 
 **Interfaces:**
 - Produces: all public endpoints listed in the spec.
-- Consumes: `SessionService`, `ExecutionService`, `ExecutionEventRepository`, `PlatformEventListener`.
+- Consumes: `SessionService`, `ExecutionService`, `ExecutionEventMapper`, `PlatformEventListener`.
 - Produces: live listener registered before historical snapshot, with sequence-based deduplication.
 - Produces: `CreateExecutionRequest(String message)`, `CreateExecutionResponse(String executionId, ExecutionStatus status, String eventsUrl)`, `SessionResponse(String id, String agentKey, String runtimeType, SessionStatus status, Instant createdAt, Instant closedAt)`, `ExecutionResponse` mirroring the persisted Execution fields, and `ExecutionEventResponse(String executionId, long sequence, PlatformEventType type, Instant timestamp, Map<String,Object> data)`.
 
@@ -1180,7 +1224,7 @@ git commit -m "feat: expose session execution and sse apis"
 **Interfaces:**
 - Produces: stable `ApiError(code, message, timestamp)` without stack trace.
 - Produces: startup cleanup of ACTIVE Sessions and CREATED/RUNNING Executions.
-- Consumes: repositories from Task 2.
+- Consumes: `SessionMapper` and `ExecutionMapper` from Task 2.
 
 - [ ] **Step 1: Write failing error mapping and recovery tests**
 
@@ -1199,10 +1243,9 @@ void shouldMapConcurrentExecutionToConflictWithoutStackTrace() throws Exception 
 
 @Test
 void shouldCloseStaleSessionsAndFailNonTerminalExecutions() {
-    recovery.run();
-    verify(sessionRepository).closeAllActive(any(Instant.class));
-    verify(executionRepository).failNonTerminalExecutions(
-            eq("APPLICATION_RESTARTED"), anyString(), any(Instant.class));
+    recovery.run(mock(ApplicationArguments.class));
+    verify(sessionMapper).update(isNull(), any(LambdaUpdateWrapper.class));
+    verify(executionMapper).update(isNull(), any(LambdaUpdateWrapper.class));
 }
 ```
 
@@ -1241,15 +1284,27 @@ Map validation to 400, missing resources to 404, conflicts to 409, invalid Inter
 
 ```java
 @Component
-public final class StartupRecovery implements ApplicationRunner {
+public class StartupRecovery implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments arguments) {
         Instant now = Instant.now(clock);
-        sessionRepository.closeAllActive(now);
-        executionRepository.failNonTerminalExecutions(
-                "APPLICATION_RESTARTED",
-                "Execution interrupted by application restart", now);
+        int closedSessions = sessionMapper.update(null,
+                Wrappers.<AgentSession>lambdaUpdate()
+                        .eq(AgentSession::getStatus, SessionStatus.ACTIVE)
+                        .set(AgentSession::getStatus, SessionStatus.CLOSED)
+                        .set(AgentSession::getClosedAt, now));
+        int failedExecutions = executionMapper.update(null,
+                Wrappers.<AgentExecution>lambdaUpdate()
+                        .in(AgentExecution::getStatus,
+                                ExecutionStatus.CREATED, ExecutionStatus.RUNNING)
+                        .set(AgentExecution::getStatus, ExecutionStatus.FAILED)
+                        .set(AgentExecution::getErrorCode, "APPLICATION_RESTARTED")
+                        .set(AgentExecution::getErrorMessage,
+                                "Execution interrupted by application restart")
+                        .set(AgentExecution::getFinishedAt, now));
+        log.info("Recovered runtime state: closedSessions={}, failedExecutions={}",
+                closedSessions, failedExecutions);
     }
 }
 ```
@@ -1304,24 +1359,24 @@ class PiRuntimeSmokeTest {
     @Test
     void shouldCallBothSalesToolsAndKeepMultiTurnContext() {
         AgentSession session = sessionService.createSession();
-        AgentExecution first = executionService.createExecution(session.id(),
+        AgentExecution first = executionService.createExecution(session.getId(),
                 "请分析客户 C001 的询盘 I001，并给出销售建议");
-        awaitTerminal(first.id());
-        AgentExecution completed = executionService.getRequired(first.id());
-        assertThat(completed.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
-        assertThat(completed.output()).contains("客户概况", "询盘摘要", "销售建议", "下一步行动");
-        assertThat(completed.toolCallCount()).isGreaterThanOrEqualTo(2);
+        awaitTerminal(first.getId());
+        AgentExecution completed = executionService.getRequired(first.getId());
+        assertThat(completed.getStatus()).isEqualTo(ExecutionStatus.SUCCEEDED);
+        assertThat(completed.getOutput()).contains("客户概况", "询盘摘要", "销售建议", "下一步行动");
+        assertThat(completed.getToolCallCount()).isGreaterThanOrEqualTo(2);
 
-        AgentExecution second = executionService.createExecution(session.id(),
+        AgentExecution second = executionService.createExecution(session.getId(),
                 "请基于上一轮结果给出一句跟进开场白");
-        awaitTerminal(second.id());
-        assertThat(executionService.getRequired(second.id()).status())
+        awaitTerminal(second.getId());
+        assertThat(executionService.getRequired(second.getId()).getStatus())
                 .isEqualTo(ExecutionStatus.SUCCEEDED);
     }
 
     private void awaitTerminal(String executionId) {
         await().atMost(Duration.ofSeconds(180)).untilAsserted(() ->
-                assertThat(executionService.getRequired(executionId).status().isTerminal())
+                assertThat(executionService.getRequired(executionId).getStatus().isTerminal())
                         .isTrue());
     }
 }
